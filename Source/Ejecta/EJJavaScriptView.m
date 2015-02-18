@@ -68,6 +68,11 @@ void EJBlockFunctionFinalize(JSObjectRef object) {
 		backgroundQueue.maxConcurrentOperationCount = 1;
 		
 		timers = [[EJTimerCollection alloc] initWithScriptView:self];
+        baseTime = [NSDate timeIntervalSinceReferenceDate];
+        animationFrameCallbacks = [[NSMutableDictionary alloc] init];
+        canceledAnimationFrameCallbacks = [[NSMutableArray alloc] init];
+        animationFrameCounter = 1;
+        animationFrameCallbackCounter = 1;
 		
 		displayLink = [[CADisplayLink displayLinkWithTarget:proxy selector:@selector(run:)] retain];
 		[displayLink setFrameInterval:1];
@@ -141,6 +146,24 @@ void EJBlockFunctionFinalize(JSObjectRef object) {
 	[openGLContext release];
 	[appFolder release];
 	[proxy release];
+
+    // Unprotect all rAF callbacks
+    for( NSNumber *frameId in animationFrameCallbacks ) {
+        NSMutableDictionary *scheduledCallbacks = animationFrameCallbacks[frameId];
+        if( scheduledCallbacks && [scheduledCallbacks count] > 0 ) {
+            for( NSNumber *callbackId in scheduledCallbacks ) {
+                NSValue *callbackValue = scheduledCallbacks[callbackId];
+                JSValueUnprotectSafe(jsGlobalContext, callbackValue.pointerValue);
+            }
+            [scheduledCallbacks removeAllObjects];
+            [scheduledCallbacks release];
+        }
+    }
+    [animationFrameCallbacks release];
+
+    [canceledAnimationFrameCallbacks removeAllObjects];
+    [canceledAnimationFrameCallbacks release];
+
 	[super dealloc];
 }
 
@@ -324,17 +347,42 @@ void EJBlockFunctionFinalize(JSObjectRef object) {
 
 - (void)run:(CADisplayLink *)sender {
 	if(isPaused) { return; }
-	
+
+    runningDisplayLinkUpdate = YES;
+
 	// We rather poll for device motion updates at the beginning of each frame instead of
 	// spamming out updates that will never be seen.
 	[deviceMotionDelegate triggerDeviceMotionEvents];
 	
 	// Check all timers
 	[timers update];
+
+    // Flush requestAnimationFrame callback queue for current frame
+    JSValueRef timeParam[] = { JSValueMakeNumber(jsGlobalContext, ([NSDate timeIntervalSinceReferenceDate] - baseTime) * 1000.0) };
+    NSNumber *frameNumber = [NSNumber numberWithInt:animationFrameCounter];
+    if( animationFrameCallbacks[frameNumber] ) {
+        for( NSNumber *callbackNumber in animationFrameCallbacks[frameNumber] ) {
+            NSValue *callbackValue = animationFrameCallbacks[frameNumber][callbackNumber];
+            JSObjectRef callback = [callbackValue pointerValue];
+
+            // Skip callback execution if cancelAnimationFrame() was called from JS.
+            if( ![canceledAnimationFrameCallbacks containsObject:callbackNumber] ) {
+                [self invokeCallback:callback thisObject:NULL argc:1 argv:timeParam];
+            } else {
+                [canceledAnimationFrameCallbacks removeObject:callbackNumber];
+            }
+            JSValueUnprotectSafe(jsGlobalContext, callback);
+        }
+        [animationFrameCallbacks[frameNumber] removeAllObjects];
+        [animationFrameCallbacks[frameNumber] release];
+    }
 	
 	// Redraw the canvas
 	self.currentRenderingContext = screenRenderingContext;
 	[screenRenderingContext present];
+
+    runningDisplayLinkUpdate = NO;
+    animationFrameCounter++;
 }
 
 
@@ -432,6 +480,36 @@ void EJBlockFunctionFinalize(JSObjectRef object) {
 	
 	[timers cancelId:JSValueToNumberFast(ctxp, argv[0])];
 	return NULL;
+}
+
+- (JSValueRef)requestAnimationFrame:(JSContextRef)ctxp argc:(size_t)argc argv:(const JSValueRef [])argv {
+    int callbackId = animationFrameCallbackCounter;
+    int frameId = animationFrameCounter;
+
+    // If rAF is called during the current run loop, schedule for the next.
+    if( runningDisplayLinkUpdate ) {
+        frameId++;
+    }
+
+    NSNumber *callbackNumber = [NSNumber numberWithInt:callbackId];
+    NSNumber *frameNumber = [NSNumber numberWithInt:frameId];
+    JSObjectRef callback = JSValueToObject(ctxp, argv[0], NULL);
+    JSValueProtect(ctxp, callback);
+
+    if( !animationFrameCallbacks[frameNumber] ) {
+        animationFrameCallbacks[frameNumber] = [[NSMutableDictionary alloc] init];
+    }
+
+    animationFrameCallbacks[frameNumber][callbackNumber] = [NSValue valueWithPointer:callback];
+    animationFrameCallbackCounter++;
+
+    return JSValueMakeNumber(ctxp, callbackId);
+}
+
+- (JSValueRef)cancelAnimationFrame:(JSContextRef)ctxp argc:(size_t)argc argv:(const JSValueRef [])argv {
+    int callbackId = (JSValueToNumberFast(ctxp, argv[0]));
+    [canceledAnimationFrameCallbacks addObject:[NSNumber numberWithInt:callbackId]];
+    return NULL;
 }
 
 - (JSObjectRef)createFunctionWithBlock:(JSValueRef (^)(JSContextRef ctx, size_t argc, const JSValueRef argv[]))block {

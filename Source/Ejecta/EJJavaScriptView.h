@@ -51,6 +51,9 @@
 	EJClassLoader *classLoader;
 
 	EJTimerCollection *timers;
+
+    NSMutableDictionary *animationFrameCallbacks;
+    NSMutableArray *canceledAnimationFrameCallbacks;
 	
 	EJSharedOpenGLContext *openGLContext;
 	EJSharedTextureCache *textureCache;
@@ -60,6 +63,10 @@
 	EAGLContext *glCurrentContext;
 	
 	CADisplayLink *displayLink;
+    NSTimeInterval baseTime;
+    int animationFrameCounter;
+    int animationFrameCallbackCounter;
+    BOOL runningDisplayLinkUpdate;
 
 	NSObject<EJWindowEventsDelegate> *windowEventsDelegate;
 	NSObject<EJTouchDelegate> *touchDelegate;
@@ -107,6 +114,8 @@
 - (JSValueRef)deleteTimer:(JSContextRef)ctx argc:(size_t)argc argv:(const JSValueRef [])argv;
 - (JSValueRef)loadModuleWithId:(NSString *)moduleId module:(JSValueRef)module exports:(JSValueRef)exports;
 - (JSValueRef)createTimer:(JSContextRef)ctxp argc:(size_t)argc argv:(const JSValueRef [])argv repeat:(BOOL)repeat;
+- (JSValueRef)requestAnimationFrame:(JSContextRef)ctxp argc:(size_t)argc argv:(const JSValueRef [])argv;
+- (JSValueRef)cancelAnimationFrame:(JSContextRef)ctxp argc:(size_t)argc argv:(const JSValueRef [])argv;
 - (JSObjectRef)createFunctionWithBlock:(JSValueRef (^)(JSContextRef ctx, size_t argc, const JSValueRef argv[]))block;
 
 @end

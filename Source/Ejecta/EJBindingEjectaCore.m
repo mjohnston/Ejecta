@@ -168,6 +168,14 @@ EJ_BIND_FUNCTION(clearInterval, ctx, argc, argv ) {
 	return [scriptView deleteTimer:ctx argc:argc argv:argv];
 }
 
+EJ_BIND_FUNCTION(requestAnimationFrame, ctx, argc, argv ) {
+    return [scriptView requestAnimationFrame:ctx argc:argc argv:argv];
+}
+
+EJ_BIND_FUNCTION(cancelAnimationFrame, ctx, argc, argv ) {
+    return [scriptView cancelAnimationFrame:ctx argc:argc argv:argv];
+}
+
 EJ_BIND_FUNCTION(performanceNow, ctx, argc, argv ) {
 	NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
 	return JSValueMakeNumber(ctx, (now - baseTime) * 1000.0);
